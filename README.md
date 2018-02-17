@@ -8,6 +8,7 @@ Install dependencies:
 
 * meson
 * libelf
+* [libdwarfw](https://github.com/emersion/libdwarfw)
 
 Run these commands:
 
