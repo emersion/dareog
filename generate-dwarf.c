@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include <dwarf.h>
 #include <dwarfw.h>
 #include <fcntl.h>
 #include <gelf.h>
@@ -397,7 +398,9 @@ int dareog_generate_dwarf(int argc, char **argv) {
 		.code_alignment = 1,
 		.data_alignment = -8,
 		.return_address_register = 16,
-		.augmentation_data = { .pointer_encoding = 0x1B }, // DW_EH_PE_sdata4 | DW_EH_PE_pcrel
+		.augmentation_data = {
+			.pointer_encoding = DW_EH_PE_sdata4 | DW_EH_PE_pcrel,
+		},
 	};
 	if (!(n = dwarfw_cie_write(&cie, f))) {
 		fprintf(stderr, "dwarfw_cie_write\n");
@@ -408,15 +411,17 @@ int dareog_generate_dwarf(int argc, char **argv) {
 	struct dwarfw_fde fde = {
 		.cie = &cie,
 		.cie_pointer = written,
-		.initial_location = begin_loc - written,
+		.initial_location = 0,
 		.address_range = end_loc - begin_loc,
 		.instructions_length = instr_len,
 		.instructions = instr_buf,
 	};
-	if (!(n = dwarfw_fde_write(&fde, f))) {
+	GElf_Rela initial_position_rela;
+	if (!(n = dwarfw_fde_write(&fde, &initial_position_rela, f))) {
 		fprintf(stderr, "dwarfw_fde_write\n");
 		return -1;
 	}
+	initial_position_rela.r_offset += written;
 	written += n;
 	free(instr_buf);
 
@@ -458,11 +463,8 @@ int dareog_generate_dwarf(int argc, char **argv) {
 		fprintf(stderr, "can't find .text section in symbol table\n");
 		return 1;
 	}
-	GElf_Rela initial_position_rela = {
-		.r_offset = 0x20,
-		.r_info = GELF_R_INFO(text_sym_idx, R_X86_64_PC32),
-		.r_addend = 0,
-	};
+	// r_offset and r_addend have already been populated by dwarfw_fde_write
+	initial_position_rela.r_info = GELF_R_INFO(text_sym_idx, R_X86_64_PC32);
 	Elf_Scn *rela = create_rela_section(elf, ".rela.eh_frame", scn,
 		&initial_position_rela);
 	if (rela == NULL) {
