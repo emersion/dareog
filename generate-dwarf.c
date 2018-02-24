@@ -197,8 +197,8 @@ static unsigned int reg_number(unsigned int reg) {
 	}
 }
 
-static int write_fde_instructions(Elf *elf, unsigned long long *begin_loc,
-		unsigned long long *end_loc, FILE *f) {
+static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
+		unsigned long long *begin_loc, unsigned long long *end_loc, FILE *f) {
 	int *orc_ip = NULL, orc_size = 0;
 	struct orc_entry *orc = NULL;
 	char *name;
@@ -270,7 +270,7 @@ static int write_fde_instructions(Elf *elf, unsigned long long *begin_loc,
 	}
 
 	// ra's offset is fixed at -8
-	dwarfw_cfa_write_offset(16, 1, f);
+	dwarfw_cie_write_offset(fde->cie, 16, -8, f);
 
 	int nr_entries = orc_size / sizeof(*orc);
 	for (int i = 0; i < nr_entries; i++) {
@@ -314,19 +314,21 @@ static int write_fde_instructions(Elf *elf, unsigned long long *begin_loc,
 			*end_loc = next_loc;
 		}
 
-		if (loc > 0) {
-			dwarfw_cfa_write_advance_loc(next_loc - loc, f);
+		if (next_loc > 0) {
+			dwarfw_cie_write_advance_loc(fde->cie, next_loc - loc, f);
 		}
 		loc = next_loc;
 
 		if (orc[i].sp_reg != ORC_REG_UNDEFINED) {
-			dwarfw_cfa_write_def_cfa(reg_number(orc[i].sp_reg), orc[i].sp_offset, f);
+			dwarfw_cie_write_def_cfa(fde->cie, reg_number(orc[i].sp_reg),
+				orc[i].sp_offset, f);
 		}
 
 		if (orc[i].bp_reg == ORC_REG_PREV_SP) {
-			dwarfw_cfa_write_offset(reg_number(ORC_REG_BP), orc[i].bp_offset / -8, f);
+			dwarfw_cie_write_offset(fde->cie, reg_number(ORC_REG_BP),
+				orc[i].bp_offset, f);
 		} else if (orc[i].bp_reg == ORC_REG_UNDEFINED) {
-			dwarfw_cfa_write_undefined(reg_number(ORC_REG_BP), f);
+			dwarfw_cie_write_undefined(fde->cie, reg_number(ORC_REG_BP), f);
 		}
 	}
 
@@ -367,6 +369,22 @@ int dareog_generate_dwarf(int argc, char **argv) {
 		return 1;
 	}
 
+	struct dwarfw_cie cie = {
+		.version = 1,
+		.augmentation = "zR",
+		.code_alignment = 1,
+		.data_alignment = -8,
+		.return_address_register = 16,
+		.augmentation_data = {
+			.pointer_encoding = DW_EH_PE_sdata4 | DW_EH_PE_pcrel,
+		},
+	};
+
+	struct dwarfw_fde fde = {
+		.cie = &cie,
+		.initial_location = 0,
+	};
+
 	char *instr_buf;
 	size_t instr_len;
 	FILE *f = open_memstream(&instr_buf, &instr_len);
@@ -375,11 +393,15 @@ int dareog_generate_dwarf(int argc, char **argv) {
 		return -1;
 	}
 	unsigned long long begin_loc = ULLONG_MAX, end_loc = 0;
-	if (write_fde_instructions(elf, &begin_loc, &end_loc, f)) {
+	if (write_fde_instructions(elf, &fde, &begin_loc, &end_loc, f)) {
 		fprintf(stderr, "write_fde_instructions\n");
 		return -1;
 	}
 	fclose(f);
+
+	fde.address_range = end_loc - begin_loc;
+	fde.instructions_length = instr_len;
+	fde.instructions = instr_buf;
 
 	size_t n, written = 0;
 
@@ -392,30 +414,14 @@ int dareog_generate_dwarf(int argc, char **argv) {
 		return -1;
 	}
 
-	struct dwarfw_cie cie = {
-		.version = 1,
-		.augmentation = "zR",
-		.code_alignment = 1,
-		.data_alignment = -8,
-		.return_address_register = 16,
-		.augmentation_data = {
-			.pointer_encoding = DW_EH_PE_sdata4 | DW_EH_PE_pcrel,
-		},
-	};
 	if (!(n = dwarfw_cie_write(&cie, f))) {
 		fprintf(stderr, "dwarfw_cie_write\n");
 		return -1;
 	}
 	written += n;
 
-	struct dwarfw_fde fde = {
-		.cie = &cie,
-		.cie_pointer = written,
-		.initial_location = 0,
-		.address_range = end_loc - begin_loc,
-		.instructions_length = instr_len,
-		.instructions = instr_buf,
-	};
+	fde.cie_pointer = written;
+
 	GElf_Rela initial_position_rela;
 	if (!(n = dwarfw_fde_write(&fde, &initial_position_rela, f))) {
 		fprintf(stderr, "dwarfw_fde_write\n");
