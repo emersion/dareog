@@ -18,7 +18,7 @@ dareog_inc = include_directories('include')
 arch = target_machine.cpu_family().split('_')[0]
 arch_inc = include_directories('arch/'+arch+'/include')
 
-dwarfw = dependency('dwarfw')
+dwarfw = dependency('dwarfw', fallback: ['libdwarfw', 'dwarfw'])
 elf = dependency('libelf')
 
 executable(
