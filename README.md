@@ -19,4 +19,7 @@ ninja -C build
 
 ## License
 
-MIT
+GPLv2
+
+Copyright (c) 2017 Josh Poimboeuf <jpoimboe@redhat.com>  
+Copyright (c) 2018 emersion

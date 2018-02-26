@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+
 #include <stdint.h>
 
 // Defined when needed from include/linux/types.h in the kernel tree
