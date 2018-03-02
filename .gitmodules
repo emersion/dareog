@@ -1,0 +1,3 @@
+[submodule "subprojects/libdwarfw"]
+	path = subprojects/libdwarfw
+	url = https://github.com/emersion/libdwarfw.git
