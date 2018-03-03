@@ -216,7 +216,8 @@ static unsigned int reg_number(unsigned int reg) {
 }
 
 static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
-		unsigned long long *begin_loc, unsigned long long *end_loc, FILE *f) {
+		unsigned long long *begin_loc, unsigned long long *end_loc,
+		ssize_t *shndx, FILE *f) {
 	int *orc_ip = NULL, orc_size = 0;
 	struct orc_entry *orc = NULL;
 	char *name;
@@ -303,25 +304,10 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 				return -1;
 			}
 
-			scn = elf_getscn(elf, sym.st_shndx);
-			if (!scn) {
-				fprintf(stderr, "elf_getscn\n");
-				return -1;
-			}
-
-			if (!gelf_getshdr(scn, &sh)) {
-				fprintf(stderr, "gelf_getshdr\n");
-				return -1;
-			}
-
-			name = elf_strptr(elf, shstrtab_idx, sh.sh_name);
-			if (!name || !*name) {
-				fprintf(stderr, "elf_strptr\n");
-				return -1;
-			}
-
+			*shndx = sym.st_shndx;
 			next_loc = (unsigned long long)rela.r_addend;
 		} else {
+			*shndx = -1;
 			next_loc = (unsigned long long)(orc_ip_addr + (i * sizeof(int)) + orc_ip[i]);
 		}
 
@@ -411,7 +397,8 @@ int dareog_generate_dwarf(int argc, char **argv) {
 		return -1;
 	}
 	unsigned long long begin_loc = ULLONG_MAX, end_loc = 0;
-	if (write_fde_instructions(elf, &fde, &begin_loc, &end_loc, f)) {
+	ssize_t shndx = -1;
+	if (write_fde_instructions(elf, &fde, &begin_loc, &end_loc, &shndx, f)) {
 		fprintf(stderr, "write_fde_instructions\n");
 		return -1;
 	}
@@ -481,19 +468,21 @@ int dareog_generate_dwarf(int argc, char **argv) {
 	}
 
 	// Create the .eh_frame.rela section
-	GElf_Sym text_sym;
-	int text_sym_idx = find_section_symbol(elf, elf_ndxscn(text), &text_sym);
-	if (text_sym_idx < 0) {
-		fprintf(stderr, "can't find .text section in symbol table\n");
-		return 1;
-	}
-	// r_offset and r_addend have already been populated by dwarfw_fde_write
-	initial_position_rela.r_info =
-		GELF_R_INFO(text_sym_idx, ELF32_R_TYPE(initial_position_rela.r_info));
-	Elf_Scn *rela = create_rela_section(elf, ".rela.eh_frame", scn,
-		&initial_position_rela);
-	if (rela == NULL) {
-		return 1;
+	if (shndx >= 0) {
+		GElf_Sym text_sym;
+		int text_sym_idx = find_section_symbol(elf, shndx, &text_sym);
+		if (text_sym_idx < 0) {
+			fprintf(stderr, "can't find .text section in symbol table\n");
+			return 1;
+		}
+		// r_offset and r_addend have already been populated by dwarfw_fde_write
+		initial_position_rela.r_info = GELF_R_INFO(text_sym_idx,
+			ELF32_R_TYPE(initial_position_rela.r_info));
+		Elf_Scn *rela = create_rela_section(elf, ".rela.eh_frame", scn,
+			&initial_position_rela);
+		if (rela == NULL) {
+			return 1;
+		}
 	}
 
 	// Write the modified ELF object
