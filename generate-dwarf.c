@@ -326,6 +326,12 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 		if (orc[i].sp_reg != ORC_REG_UNDEFINED) {
 			dwarfw_cie_write_def_cfa(fde->cie, reg_number(orc[i].sp_reg),
 				orc[i].sp_offset, f);
+		} else if (i == nr_entries - 1) {
+			// Last entry has an undefined sp_reg
+			continue;
+		} else {
+			fprintf(stderr, "error: undefined sp_reg\n");
+			return -1;
 		}
 
 		if (orc[i].bp_reg == ORC_REG_PREV_SP) {
@@ -333,6 +339,9 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 				orc[i].bp_offset, f);
 		} else if (orc[i].bp_reg == ORC_REG_UNDEFINED) {
 			dwarfw_cie_write_undefined(fde->cie, reg_number(ORC_REG_BP), f);
+		} else {
+			fprintf(stderr, "error: unsupported bp_reg\n");
+			return -1;
 		}
 	}
 
