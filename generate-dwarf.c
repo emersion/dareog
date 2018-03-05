@@ -218,48 +218,42 @@ static unsigned int reg_number(unsigned int reg) {
 static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 		unsigned long long *begin_loc, unsigned long long *end_loc,
 		ssize_t *shndx, FILE *f) {
-	int *orc_ip = NULL, orc_size = 0;
-	struct orc_entry *orc = NULL;
-	char *name;
-	Elf64_Addr orc_ip_addr = 0;
-	size_t shstrtab_idx;
-	Elf_Scn *scn;
-	GElf_Shdr sh;
-	GElf_Rela rela;
-	GElf_Sym sym;
-	Elf_Data *data, *symtab = NULL, *rela_orc_ip = NULL;
-	unsigned long long loc = 0, next_loc;
-
 	size_t nr_sections;
 	if (elf_getshdrnum(elf, &nr_sections)) {
 		fprintf(stderr, "elf_getshdrnum\n");
 		return -1;
 	}
 
+	size_t shstrtab_idx;
 	if (elf_getshdrstrndx(elf, &shstrtab_idx)) {
 		fprintf(stderr, "elf_getshdrstrndx\n");
 		return -1;
 	}
 
+	int *orc_ip = NULL, orc_size = 0;
+	struct orc_entry *orc = NULL;
+	Elf64_Addr orc_ip_addr = 0;
+	Elf_Data *symtab = NULL, *rela_orc_ip = NULL;
 	for (size_t i = 0; i < nr_sections; i++) {
-		scn = elf_getscn(elf, i);
+		Elf_Scn *scn = elf_getscn(elf, i);
 		if (!scn) {
 			fprintf(stderr, "elf_getscn\n");
 			return -1;
 		}
 
+		GElf_Shdr sh;
 		if (!gelf_getshdr(scn, &sh)) {
 			fprintf(stderr, "gelf_getshdr\n");
 			return -1;
 		}
 
-		name = elf_strptr(elf, shstrtab_idx, sh.sh_name);
+		char *name = elf_strptr(elf, shstrtab_idx, sh.sh_name);
 		if (!name) {
 			fprintf(stderr, "elf_strptr\n");
 			return -1;
 		}
 
-		data = elf_getdata(scn, NULL);
+		Elf_Data *data = elf_getdata(scn, NULL);
 		if (!data) {
 			fprintf(stderr, "elf_getdata\n");
 			return -1;
@@ -288,14 +282,17 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 		return -1;
 	}
 
+	unsigned long long loc = 0, next_loc;
 	int nr_entries = orc_size / sizeof(*orc);
 	for (int i = 0; i < nr_entries; i++) {
 		if (rela_orc_ip) {
+			GElf_Rela rela;
 			if (!gelf_getrela(rela_orc_ip, i, &rela)) {
 				fprintf(stderr, "gelf_getrela\n");
 				return -1;
 			}
 
+			GElf_Sym sym;
 			if (!gelf_getsym(symtab, GELF_R_SYM(rela.r_info), &sym)) {
 				fprintf(stderr, "gelf_getsym\n");
 				return -1;
