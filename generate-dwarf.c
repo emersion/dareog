@@ -288,9 +288,6 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 		return -1;
 	}
 
-	// ra's offset is fixed at -8
-	dwarfw_cie_write_offset(fde->cie, 16, -8, f);
-
 	int nr_entries = orc_size / sizeof(*orc);
 	for (int i = 0; i < nr_entries; i++) {
 		if (rela_orc_ip) {
@@ -331,9 +328,14 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 		if (orc[i].sp_reg != ORC_REG_UNDEFINED) {
 			dwarfw_cie_write_def_cfa(fde->cie, reg_number(orc[i].sp_reg),
 				orc[i].sp_offset, f);
+
+			// ra's offset is fixed at -8
+			dwarfw_cie_write_offset(fde->cie, 16, -8, f);
 		} else {
-			fprintf(stderr, "error: undefined sp_reg\n");
-			return -1;
+			fprintf(stderr, "warning: undefined sp_reg at 0x%llx\n", loc);
+
+			// write an undefined ra
+			dwarfw_cie_write_undefined(fde->cie, 16, f);
 		}
 
 		if (orc[i].bp_reg == ORC_REG_PREV_SP) {
@@ -342,7 +344,7 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 		} else if (orc[i].bp_reg == ORC_REG_UNDEFINED) {
 			dwarfw_cie_write_undefined(fde->cie, reg_number(ORC_REG_BP), f);
 		} else {
-			fprintf(stderr, "error: unsupported bp_reg\n");
+			fprintf(stderr, "error: unsupported bp_reg at 0x%llx\n", loc);
 			return -1;
 		}
 	}
