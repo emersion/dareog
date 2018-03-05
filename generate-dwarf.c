@@ -156,8 +156,41 @@ static int find_section_symbol(Elf *elf, size_t index, GElf_Sym *sym) {
 	return -1;
 }
 
+static Elf_Scn *create_debug_frame_section(Elf *elf, const char *name,
+		char *buf, size_t len) {
+	Elf_Scn *scn = create_section(elf, name);
+	if (scn == NULL) {
+		return NULL;
+	}
+
+	Elf_Data *data = elf_newdata(scn);
+	if (data == NULL) {
+		fprintf(stderr, "elf_newdata() failed: %s\n", elf_errmsg(-1));
+		return NULL;
+	}
+	data->d_align = 4;
+	data->d_buf = buf;
+	data->d_size = len;
+
+	GElf_Shdr shdr;
+	if (!gelf_getshdr(scn, &shdr)) {
+		fprintf(stderr, "gelf_getshdr() failed\n");
+		return NULL;
+	}
+	shdr.sh_size = len;
+	shdr.sh_type = SHT_PROGBITS;
+	shdr.sh_addralign = 1;
+	shdr.sh_flags = SHF_ALLOC;
+	if (!gelf_update_shdr(scn, &shdr)) {
+		fprintf(stderr, "gelf_update_shdr() failed\n");
+		return NULL;
+	}
+
+	return scn;
+}
+
 static Elf_Scn *create_rela_section(Elf *elf, const char *name, Elf_Scn *base,
-		GElf_Rela *rela) {
+		char *buf, size_t len) {
 	Elf_Scn *scn = create_section(elf, name);
 	if (scn == NULL) {
 		fprintf(stderr, "can't create rela section\n");
@@ -170,8 +203,8 @@ static Elf_Scn *create_rela_section(Elf *elf, const char *name, Elf_Scn *base,
 		return NULL;
 	}
 
-	data->d_buf = rela;
-	data->d_size = sizeof(GElf_Rela);
+	data->d_buf = buf;
+	data->d_size = len;
 	data->d_align = 1;
 
 	Elf_Scn *symtab = find_section_by_name(elf, ".symtab");
@@ -215,11 +248,10 @@ static unsigned int reg_number(unsigned int reg) {
 	}
 }
 
-static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
-		unsigned long long *begin_loc, unsigned long long *end_loc,
-		ssize_t *shndx, FILE *f) {
-	size_t nr_sections;
-	if (elf_getshdrnum(elf, &nr_sections)) {
+static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shndx,
+		unsigned long long *begin_loc, unsigned long long *end_loc, FILE *f) {
+	size_t sections_num;
+	if (elf_getshdrnum(elf, &sections_num)) {
 		fprintf(stderr, "elf_getshdrnum\n");
 		return -1;
 	}
@@ -230,11 +262,12 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 		return -1;
 	}
 
+	// TODO: do this only once
 	int *orc_ip = NULL, orc_size = 0;
 	struct orc_entry *orc = NULL;
 	Elf64_Addr orc_ip_addr = 0;
 	Elf_Data *symtab = NULL, *rela_orc_ip = NULL;
-	for (size_t i = 0; i < nr_sections; i++) {
+	for (size_t i = 0; i < sections_num; i++) {
 		Elf_Scn *scn = elf_getscn(elf, i);
 		if (!scn) {
 			fprintf(stderr, "elf_getscn\n");
@@ -250,6 +283,7 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 		char *name = elf_strptr(elf, shstrtab_idx, sh.sh_name);
 		if (!name) {
 			fprintf(stderr, "elf_strptr\n");
+			continue; // TODO
 			return -1;
 		}
 
@@ -298,10 +332,13 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 				return -1;
 			}
 
-			*shndx = sym.st_shndx;
+			if (shndx >= 0 && sym.st_shndx != shndx) {
+				continue;
+			}
+
 			next_loc = (unsigned long long)rela.r_addend;
 		} else {
-			*shndx = -1;
+			// TODO: check shndx somehow
 			next_loc = (unsigned long long)(orc_ip_addr + (i * sizeof(int)) + orc_ip[i]);
 		}
 
@@ -312,6 +349,8 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 			*end_loc = next_loc;
 		}
 
+		// TODO: do not emit last entry of a section when the section isn't the
+		// last one
 		if (i == nr_entries - 1 && orc[i].sp_reg == ORC_REG_UNDEFINED) {
 			// Last entry has an undefined sp_reg
 			continue;
@@ -349,6 +388,81 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde,
 	return 0;
 }
 
+static int process_section(Elf *elf, Elf_Scn *s, FILE *f, size_t *written,
+		FILE *rela_f) {
+	// TODO: support non-relocatable ELF files
+	size_t shndx = elf_ndxscn(s);
+
+	struct dwarfw_cie cie = {
+		.version = 1,
+		.augmentation = "zR",
+		.code_alignment = 1,
+		.data_alignment = -8,
+		.return_address_register = 16,
+		.augmentation_data = {
+			.pointer_encoding = DW_EH_PE_sdata4 | DW_EH_PE_pcrel,
+		},
+	};
+
+	struct dwarfw_fde fde = {
+		.cie = &cie,
+		.initial_location = 0,
+	};
+
+	char *instr_buf;
+	size_t instr_len;
+	FILE *instr_f = open_memstream(&instr_buf, &instr_len);
+	if (instr_f == NULL) {
+		fprintf(stderr, "open_memstream\n");
+		return -1;
+	}
+	unsigned long long begin_loc = ULLONG_MAX, end_loc = 0;
+	if (write_fde_instructions(elf, &fde, shndx, &begin_loc, &end_loc, instr_f)) {
+		fprintf(stderr, "write_fde_instructions\n");
+		return -1;
+	}
+	fclose(instr_f);
+
+	fde.address_range = end_loc - begin_loc;
+	fde.instructions_length = instr_len;
+	fde.instructions = instr_buf;
+
+	size_t n;
+	if (!(n = dwarfw_cie_write(&cie, f))) {
+		fprintf(stderr, "dwarfw_cie_write\n");
+		return -1;
+	}
+	*written += n;
+
+	fde.cie_pointer = *written;
+
+	GElf_Rela initial_position_rela;
+	if (!(n = dwarfw_fde_write(&fde, &initial_position_rela, f))) {
+		fprintf(stderr, "dwarfw_fde_write\n");
+		return -1;
+	}
+	initial_position_rela.r_offset += *written;
+	*written += n;
+	free(instr_buf);
+
+	GElf_Sym text_sym;
+	int text_sym_idx = find_section_symbol(elf, shndx, &text_sym);
+	if (text_sym_idx < 0) {
+		fprintf(stderr, "can't find .text section in symbol table\n");
+		return 1;
+	}
+	// r_offset and r_addend have already been populated by dwarfw_fde_write
+	initial_position_rela.r_info = GELF_R_INFO(text_sym_idx,
+		ELF32_R_TYPE(initial_position_rela.r_info));
+
+	if (!fwrite(&initial_position_rela, 1, sizeof(GElf_Rela), rela_f)) {
+		fprintf(stderr, "can't write rela\n");
+		return 1;
+	}
+
+	return 0;
+}
+
 int dareog_generate_dwarf(int argc, char **argv) {
 	if (argc != 2) {
 		fprintf(stderr, "Missing ELF object path\n");
@@ -377,122 +491,64 @@ int dareog_generate_dwarf(int argc, char **argv) {
 		return 1;
 	}
 
-	Elf_Scn *text = find_section_by_name(elf, ".text");
-	if (text == NULL) {
-		fprintf(stderr, "ELF object is missing a .text section\n");
-		return 1;
-	}
-
-	struct dwarfw_cie cie = {
-		.version = 1,
-		.augmentation = "zR",
-		.code_alignment = 1,
-		.data_alignment = -8,
-		.return_address_register = 16,
-		.augmentation_data = {
-			.pointer_encoding = DW_EH_PE_sdata4 | DW_EH_PE_pcrel,
-		},
-	};
-
-	struct dwarfw_fde fde = {
-		.cie = &cie,
-		.initial_location = 0,
-	};
-
-	char *instr_buf;
-	size_t instr_len;
-	FILE *f = open_memstream(&instr_buf, &instr_len);
-	if (f == NULL) {
-		fprintf(stderr, "open_memstream\n");
-		return -1;
-	}
-	unsigned long long begin_loc = ULLONG_MAX, end_loc = 0;
-	ssize_t shndx = -1;
-	if (write_fde_instructions(elf, &fde, &begin_loc, &end_loc, &shndx, f)) {
-		fprintf(stderr, "write_fde_instructions\n");
-		return -1;
-	}
-	fclose(f);
-
-	fde.address_range = end_loc - begin_loc;
-	fde.instructions_length = instr_len;
-	fde.instructions = instr_buf;
-
-	size_t n, written = 0;
-
-	// Write the .eh_frame section
 	char *buf;
 	size_t len;
-	f = open_memstream(&buf, &len);
+	FILE *f = open_memstream(&buf, &len);
 	if (f == NULL) {
 		fprintf(stderr, "open_memstream\n");
-		return -1;
+		return 1;
 	}
 
-	if (!(n = dwarfw_cie_write(&cie, f))) {
-		fprintf(stderr, "dwarfw_cie_write\n");
-		return -1;
+	char *rela_buf;
+	size_t rela_len;
+	FILE *rela_f = open_memstream(&rela_buf, &rela_len);
+	if (rela_f == NULL) {
+		fprintf(stderr, "open_memstream\n");
+		return 1;
 	}
-	written += n;
 
-	fde.cie_pointer = written;
-
-	GElf_Rela initial_position_rela;
-	if (!(n = dwarfw_fde_write(&fde, &initial_position_rela, f))) {
-		fprintf(stderr, "dwarfw_fde_write\n");
-		return -1;
+	size_t sections_num;
+	if (elf_getshdrnum(elf, &sections_num)) {
+		return 1;
 	}
-	initial_position_rela.r_offset += written;
-	written += n;
-	free(instr_buf);
+
+	size_t written = 0;
+	for (size_t i = 0; i < sections_num; ++i) {
+		Elf_Scn *s = elf_getscn(elf, i);
+		if (s == NULL) {
+			return 1;
+		}
+
+		GElf_Shdr sh;
+		if (!gelf_getshdr(s, &sh)) {
+			return 1;
+		}
+
+		if ((sh.sh_flags & SHF_EXECINSTR) == 0) {
+			continue;
+		}
+
+		if (process_section(elf, s, f, &written, rela_f)) {
+			return 1;
+		}
+	}
 
 	fclose(f);
+	fclose(rela_f);
 
 	// Create the .eh_frame section
-	Elf_Scn *scn = create_section(elf, ".eh_frame");
+	Elf_Scn *scn = create_debug_frame_section(elf, ".eh_frame", buf, len);
 	if (scn == NULL) {
-		return 1;
-	}
-
-	Elf_Data *data = elf_newdata(scn);
-	if (data == NULL) {
-		fprintf(stderr, "elf_newdata() failed: %s\n", elf_errmsg(-1));
-		return 1;
-	}
-	data->d_align = 4;
-	data->d_buf = buf;
-	data->d_size = len;
-
-	GElf_Shdr shdr;
-	if (!gelf_getshdr(scn, &shdr)) {
-		fprintf(stderr, "gelf_getshdr() failed\n");
-		return 1;
-	}
-	shdr.sh_size = len;
-	shdr.sh_type = SHT_PROGBITS;
-	shdr.sh_addralign = 1;
-	shdr.sh_flags = SHF_ALLOC;
-	if (!gelf_update_shdr(scn, &shdr)) {
-		fprintf(stderr, "gelf_update_shdr() failed\n");
+		fprintf(stderr, "create_debug_frame_section() failed\n");
 		return 1;
 	}
 
 	// Create the .eh_frame.rela section
-	if (shndx >= 0) {
-		GElf_Sym text_sym;
-		int text_sym_idx = find_section_symbol(elf, shndx, &text_sym);
-		if (text_sym_idx < 0) {
-			fprintf(stderr, "can't find .text section in symbol table\n");
-			return 1;
-		}
-		// r_offset and r_addend have already been populated by dwarfw_fde_write
-		initial_position_rela.r_info = GELF_R_INFO(text_sym_idx,
-			ELF32_R_TYPE(initial_position_rela.r_info));
-		Elf_Scn *rela = create_rela_section(elf, ".rela.eh_frame", scn,
-			&initial_position_rela);
-		if (rela == NULL) {
-			return 1;
-		}
+	Elf_Scn *rela = create_rela_section(elf, ".rela.eh_frame", scn,
+		rela_buf, rela_len);
+	if (rela == NULL) {
+		fprintf(stderr, "create_rela_section() failed\n");
+		return 1;
 	}
 
 	// Write the modified ELF object
@@ -503,6 +559,7 @@ int dareog_generate_dwarf(int argc, char **argv) {
 	}
 
 	free(buf);
+	free(rela_buf);
 
 	elf_end(elf);
 	close(fd);
