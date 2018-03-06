@@ -148,7 +148,8 @@ static int find_section_symbol(Elf *elf, size_t index, GElf_Sym *sym) {
 			continue;
 		}
 
-		if (GELF_ST_TYPE(sym->st_info) == STT_SECTION && index == sym->st_shndx) {
+		if (GELF_ST_TYPE(sym->st_info) == STT_SECTION &&
+				index == sym->st_shndx) {
 			return i;
 		}
 	}
@@ -263,13 +264,13 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 		unsigned long long *begin_loc, unsigned long long *end_loc, FILE *f) {
 	size_t sections_num;
 	if (elf_getshdrnum(elf, &sections_num)) {
-		fprintf(stderr, "elf_getshdrnum\n");
+		fprintf(stderr, "elf_getshdrnum() failed\n");
 		return -1;
 	}
 
 	size_t shstrtab_idx;
 	if (elf_getshdrstrndx(elf, &shstrtab_idx)) {
-		fprintf(stderr, "elf_getshdrstrndx\n");
+		fprintf(stderr, "elf_getshdrstrndx() failed\n");
 		return -1;
 	}
 
@@ -281,13 +282,13 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 	for (size_t i = 0; i < sections_num; i++) {
 		Elf_Scn *scn = elf_getscn(elf, i);
 		if (!scn) {
-			fprintf(stderr, "elf_getscn\n");
+			fprintf(stderr, "elf_getscn() failed\n");
 			return -1;
 		}
 
 		GElf_Shdr sh;
 		if (!gelf_getshdr(scn, &sh)) {
-			fprintf(stderr, "gelf_getshdr\n");
+			fprintf(stderr, "gelf_getshdr() failed\n");
 			return -1;
 		}
 
@@ -300,7 +301,7 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 
 		Elf_Data *data = elf_getdata(scn, NULL);
 		if (!data) {
-			fprintf(stderr, "elf_getdata\n");
+			fprintf(stderr, "elf_getdata() failed\n");
 			return -1;
 		}
 
@@ -333,13 +334,13 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 		if (rela_orc_ip) {
 			GElf_Rela rela;
 			if (!gelf_getrela(rela_orc_ip, i, &rela)) {
-				fprintf(stderr, "gelf_getrela\n");
+				fprintf(stderr, "gelf_getrela() failed\n");
 				return -1;
 			}
 
 			GElf_Sym sym;
 			if (!gelf_getsym(symtab, GELF_R_SYM(rela.r_info), &sym)) {
-				fprintf(stderr, "gelf_getsym\n");
+				fprintf(stderr, "gelf_getsym() failed\n");
 				return -1;
 			}
 
@@ -374,7 +375,7 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 
 		unsigned int reg;
 		if (orc[i].sp_reg == ORC_REG_UNDEFINED) {
-			fprintf(stderr, "warning: undefined sp_reg at 0x%llx\n", loc);
+			fprintf(stderr, "warning: dareog: undefined sp_reg at 0x%llx\n", loc);
 
 			// write an undefined ra
 			dwarfw_cie_write_undefined(fde->cie, 16, f);
@@ -388,7 +389,7 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 			size_t expr_len;
 			FILE *expr_f = open_memstream(&expr_buf, &expr_len);
 			if (expr_f == NULL) {
-				fprintf(stderr, "open_memstream\n");
+				fprintf(stderr, "open_memstream() failed\n");
 				return -1;
 			}
 			dwarfw_op_write_bregx(reg, orc[i].sp_offset, expr_f);
@@ -398,7 +399,8 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 			dwarfw_cie_write_def_cfa_expression(fde->cie, expr_buf, expr_len, f);
 			free(expr_buf);
 		} else {
-			fprintf(stderr, "error: unsupported sp_reg %d at 0x%llx\n", orc[i].sp_reg, loc);
+			fprintf(stderr, "error: dareog: unsupported sp_reg %d at 0x%llx\n",
+				orc[i].sp_reg, loc);
 			return -1;
 		}
 
@@ -412,7 +414,7 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 			size_t expr_len;
 			FILE *expr_f = open_memstream(&expr_buf, &expr_len);
 			if (expr_f == NULL) {
-				fprintf(stderr, "open_memstream\n");
+				fprintf(stderr, "open_memstream() failed\n");
 				return -1;
 			}
 			dwarfw_op_write_bregx(reg, orc[i].bp_offset, expr_f);
@@ -426,7 +428,7 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 			size_t expr_len;
 			FILE *expr_f = open_memstream(&expr_buf, &expr_len);
 			if (expr_f == NULL) {
-				fprintf(stderr, "open_memstream\n");
+				fprintf(stderr, "open_memstream() failed\n");
 				return -1;
 			}
 			dwarfw_op_write_bregx(reg, orc[i].bp_offset, expr_f);
@@ -437,7 +439,8 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 				expr_buf, expr_len, f);
 			free(expr_buf);
 		} else {
-			fprintf(stderr, "error: unsupported bp_reg %d at 0x%llx\n", orc[i].bp_reg, loc);
+			fprintf(stderr, "error: dareog: unsupported bp_reg %d at 0x%llx\n",
+				orc[i].bp_reg, loc);
 			return -1;
 		}
 	}
@@ -470,12 +473,12 @@ static int process_section(Elf *elf, Elf_Scn *s, FILE *f, size_t *written,
 	size_t instr_len;
 	FILE *instr_f = open_memstream(&instr_buf, &instr_len);
 	if (instr_f == NULL) {
-		fprintf(stderr, "open_memstream\n");
+		fprintf(stderr, "open_memstream() failed\n");
 		return -1;
 	}
 	unsigned long long begin_loc = ULLONG_MAX, end_loc = 0;
 	if (write_fde_instructions(elf, &fde, shndx, &begin_loc, &end_loc, instr_f)) {
-		fprintf(stderr, "write_fde_instructions\n");
+		fprintf(stderr, "write_fde_instructions() failed\n");
 		return -1;
 	}
 	fclose(instr_f);
@@ -486,7 +489,7 @@ static int process_section(Elf *elf, Elf_Scn *s, FILE *f, size_t *written,
 
 	size_t n;
 	if (!(n = dwarfw_cie_write(&cie, f))) {
-		fprintf(stderr, "dwarfw_cie_write\n");
+		fprintf(stderr, "dwarfw_cie_write() failed\n");
 		return -1;
 	}
 	*written += n;
@@ -495,7 +498,7 @@ static int process_section(Elf *elf, Elf_Scn *s, FILE *f, size_t *written,
 
 	GElf_Rela initial_position_rela;
 	if (!(n = dwarfw_fde_write(&fde, &initial_position_rela, f))) {
-		fprintf(stderr, "dwarfw_fde_write\n");
+		fprintf(stderr, "dwarfw_fde_write() failed\n");
 		return -1;
 	}
 	initial_position_rela.r_offset += *written;
@@ -522,7 +525,7 @@ static int process_section(Elf *elf, Elf_Scn *s, FILE *f, size_t *written,
 
 int dareog_generate_dwarf(int argc, char **argv) {
 	if (argc != 2) {
-		fprintf(stderr, "Missing ELF object path\n");
+		fprintf(stderr, "missing ELF object path\n");
 		return -1;
 	}
 
@@ -531,20 +534,20 @@ int dareog_generate_dwarf(int argc, char **argv) {
 	char *objname = argv[1];
 	int fd = open(objname, O_RDWR);
 	if (fd == -1) {
-		fprintf(stderr, "Cannot open file\n");
+		fprintf(stderr, "cannot open file\n");
 		return -1;
 	}
 
 	Elf *elf = elf_begin(fd, ELF_C_RDWR_MMAP, NULL);
 	if (!elf) {
-		fprintf(stderr, "elf_begin\n");
+		fprintf(stderr, "elf_begin() failed\n");
 		return -1;
 	}
 
 	// Check the ELF object
 	Elf_Kind ek = elf_kind(elf);
 	if (ek != ELF_K_ELF) {
-		fprintf(stderr, "Not an ELF object\n");
+		fprintf(stderr, "not an ELF object\n");
 		return 1;
 	}
 
@@ -552,7 +555,7 @@ int dareog_generate_dwarf(int argc, char **argv) {
 	size_t len;
 	FILE *f = open_memstream(&buf, &len);
 	if (f == NULL) {
-		fprintf(stderr, "open_memstream\n");
+		fprintf(stderr, "open_memstream() failed\n");
 		return 1;
 	}
 
@@ -560,7 +563,7 @@ int dareog_generate_dwarf(int argc, char **argv) {
 	size_t rela_len;
 	FILE *rela_f = open_memstream(&rela_buf, &rela_len);
 	if (rela_f == NULL) {
-		fprintf(stderr, "open_memstream\n");
+		fprintf(stderr, "open_memstream() failed\n");
 		return 1;
 	}
 
