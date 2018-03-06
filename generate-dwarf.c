@@ -248,6 +248,17 @@ static unsigned int reg_number(unsigned int reg) {
 	}
 }
 
+static unsigned int indirect_reg_number(unsigned int reg) {
+	switch (reg) {
+	case ORC_REG_BP_INDIRECT:
+		return reg_number(ORC_REG_BP);
+	case ORC_REG_SP_INDIRECT:
+		return reg_number(ORC_REG_SP);
+	default:
+		return reg_number(ORC_REG_UNDEFINED);
+	}
+}
+
 static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shndx,
 		unsigned long long *begin_loc, unsigned long long *end_loc, FILE *f) {
 	size_t sections_num;
@@ -361,17 +372,25 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 		}
 		loc = next_loc;
 
-		if (orc[i].sp_reg != ORC_REG_UNDEFINED) {
-			dwarfw_cie_write_def_cfa(fde->cie, reg_number(orc[i].sp_reg),
-				orc[i].sp_offset, f);
-
-			// ra's offset is fixed at -8
-			dwarfw_cie_write_offset(fde->cie, 16, -8, f);
-		} else {
+		unsigned int reg;
+		if (orc[i].sp_reg == ORC_REG_UNDEFINED) {
 			fprintf(stderr, "warning: undefined sp_reg at 0x%llx\n", loc);
 
 			// write an undefined ra
 			dwarfw_cie_write_undefined(fde->cie, 16, f);
+		} else if ((reg = reg_number(orc[i].sp_reg)) != 0) {
+			dwarfw_cie_write_def_cfa(fde->cie, reg, orc[i].sp_offset, f);
+
+			// ra's offset is fixed at -8
+			dwarfw_cie_write_offset(fde->cie, 16, -8, f);
+		} else if ((reg = indirect_reg_number(orc[i].sp_reg)) != 0) {
+			// TODO
+			fprintf(stderr, "warning: unsupported sp_reg with indirect register %d at 0x%llx\n", orc[i].sp_reg, loc);
+			dwarfw_cie_write_undefined(fde->cie, 16, f);
+			// TODO: orc[i].sp_offset != 0 support
+		} else {
+			fprintf(stderr, "error: unsupported sp_reg %d at 0x%llx\n", orc[i].sp_reg, loc);
+			return -1;
 		}
 
 		if (orc[i].bp_reg == ORC_REG_PREV_SP) {
@@ -379,8 +398,19 @@ static int write_fde_instructions(Elf *elf, struct dwarfw_fde *fde, ssize_t shnd
 				orc[i].bp_offset, f);
 		} else if (orc[i].bp_reg == ORC_REG_UNDEFINED) {
 			dwarfw_cie_write_undefined(fde->cie, reg_number(ORC_REG_BP), f);
+		} else if ((reg = reg_number(orc[i].bp_reg)) != 0) {
+			// TODO
+			//dwarfw_cie_write_register(fde->cie, reg_number(ORC_REG_BP), reg, f);
+			fprintf(stderr, "warning: unsupported bp_reg with register %d at 0x%llx\n", orc[i].bp_reg, loc);
+			dwarfw_cie_write_undefined(fde->cie, reg_number(ORC_REG_BP), f);
+			// TODO: orc[i].bp_offset != 0 support
+		} else if ((reg = indirect_reg_number(orc[i].bp_reg)) != 0) {
+			// TODO
+			fprintf(stderr, "warning: unsupported bp_reg with indirect register %d at 0x%llx\n", orc[i].bp_reg, loc);
+			dwarfw_cie_write_undefined(fde->cie, reg_number(ORC_REG_BP), f);
+			// TODO: orc[i].bp_offset != 0 support
 		} else {
-			fprintf(stderr, "error: unsupported bp_reg at 0x%llx\n", loc);
+			fprintf(stderr, "error: unsupported bp_reg %d at 0x%llx\n", orc[i].bp_reg, loc);
 			return -1;
 		}
 	}
