@@ -27,6 +27,7 @@ executable(
 		'dareog.c',
 		'dump.c',
 		'generate-dwarf.c',
+		'symbols.c',
 	]),
 	dependencies: [dwarfw, elf],
 	include_directories: [dareog_inc, arch_inc],
