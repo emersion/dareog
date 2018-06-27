@@ -434,8 +434,11 @@ static int process_section(struct dareog_state *state, Elf_Scn *s, FILE *f,
 	}
 	*written += n;
 
+	// Get function symbols for this section. We'll generate one FDE per
+	// function.
 	size_t func_syms_len = 0;
-	GElf_Sym *func_syms = get_function_symbols(state->elf, &func_syms_len);
+	GElf_Sym *func_syms =
+		get_function_symbols(state->elf, shndx, &func_syms_len);
 	if (func_syms == NULL) {
 		// No symbols, generate only one FDE for the whole .text section
 		func_syms_len = 1;

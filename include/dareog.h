@@ -15,6 +15,6 @@ struct dareog_state {
 int dareog_dump(int argc, char **argv);
 int dareog_generate_dwarf(int argc, char **argv);
 
-GElf_Sym *get_function_symbols(Elf *elf, size_t *len);
+GElf_Sym *get_function_symbols(Elf *elf, size_t shndx, size_t *len);
 
 #endif

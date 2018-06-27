@@ -10,7 +10,7 @@ int compare_symbols(const void *a, const void *b) {
 	return sa->st_value - sb->st_value;
 }
 
-GElf_Sym *get_function_symbols(Elf *elf, size_t *len) {
+GElf_Sym *get_function_symbols(Elf *elf, size_t shndx, size_t *len) {
 	Elf_Scn *symtab = NULL;
 	GElf_Shdr *symtab_shdr = NULL;
 	Elf_Scn *scn = NULL;
@@ -43,7 +43,8 @@ GElf_Sym *get_function_symbols(Elf *elf, size_t *len) {
 	for (int i = 0; i < count; ++i) {
 		GElf_Sym sym;
 		gelf_getsym(data, i, &sym);
-		if (GELF_ST_TYPE(sym.st_info) != STT_FUNC || sym.st_size == 0) {
+		if (GELF_ST_TYPE(sym.st_info) != STT_FUNC || sym.st_size == 0 ||
+				sym.st_shndx != shndx) {
 			continue;
 		}
 		memcpy(&symbols[symbols_len], &sym, sizeof(GElf_Sym));
